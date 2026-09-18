@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>20 de Junio → Plex</title>
+<meta name="description" content="Convierte facturas PDF de la Droguería 20 de Junio al CSV que importa Plex.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  :root{
+    color-scheme: light dark;
+    --bg:#eef1f0; --surface:#ffffff; --surface-2:#f6f8f7;
+    --ink:#10201c; --muted:#5c6d67; --border:#d7ded9;
+    --primary:#0a6d5c; --primary-ink:#ffffff; --primary-soft:#e2f2ee;
+    --warn:#8a5a10; --warn-soft:#fbf0dd; --warn-border:#e7c98b;
+    --danger:#a3291f; --danger-soft:#fbe9e7; --ok:#1f7a4d; --ok-soft:#e6f5ec;
+    --shadow: 0 1px 2px rgba(16,32,28,.06), 0 8px 24px -12px rgba(16,32,28,.18);
+    --radius: 14px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0e1613; --surface:#141f1b; --surface-2:#182420;
+      --ink:#e9f1ee; --muted:#93a39c; --border:#25332e;
+      --primary:#3fbfa2; --primary-ink:#04211a; --primary-soft:#173029;
+      --warn:#e8b25a; --warn-soft:#2b2415; --warn-border:#5a4a24;
+      --danger:#f0857c; --danger-soft:#301917; --ok:#6fd39c; --ok-soft:#122a1e;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.5);
+    }
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:"IBM Plex Sans",system-ui,sans-serif;
+    padding:32px 16px 64px; display:flex; justify-content:center;
+  }
+  .wrap{ width:100%; max-width:920px; display:flex; flex-direction:column; gap:20px; }
+  .mono{ font-family:"IBM Plex Mono",ui-monospace,monospace; }
+  header.top{ display:flex; flex-direction:column; gap:6px; padding-bottom:4px; }
+  .eyebrow{
+    font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--primary); font-weight:600;
+    display:flex; align-items:center; gap:8px;
+  }
+  .barcode{ display:inline-flex; gap:1px; height:12px; align-items:flex-end; }
+  .barcode i{ display:block; width:2px; background:var(--primary); }
+  h1{ font-size:28px; margin:0; letter-spacing:-.01em; }
+  .lede{ color:var(--muted); margin:0; max-width:60ch; }
+  .card{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); padding:20px; }
+  .step-label{ font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); margin:0 0 12px; display:flex; align-items:center; gap:8px; }
+  .step-label .num{ display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; background:var(--primary-soft); color:var(--primary); font-size:10px; font-weight:700; }
+  .drop{ display:flex; flex-direction:column; align-items:center; gap:4px; border:1.5px dashed var(--border); border-radius:12px; padding:28px 22px; text-align:center; color:var(--muted); background:var(--surface-2); cursor:pointer; transition:border-color .15s, background .15s; }
+  .drop.drag{ border-color:var(--primary); background:var(--primary-soft); color:var(--primary); }
+  .drop strong{ color:var(--ink); font-size:14px; display:block; margin-bottom:2px;}
+  .drop input{ display:none; }
+  .filename{ margin-top:10px; font-size:13px; font-family:"IBM Plex Mono",monospace; color:var(--ink); display:flex; align-items:center; gap:8px; justify-content:center; }
+  .btn{ appearance:none; border:none; cursor:pointer; font:inherit; font-weight:600; font-size:14px; padding:10px 16px; border-radius:9px; display:inline-flex; align-items:center; gap:8px; }
+  .btn-primary{ background:var(--primary); color:var(--primary-ink); }
+  .btn-primary:disabled{ opacity:.45; cursor:not-allowed; }
+  .btn-ghost{ background:transparent; color:var(--primary); border:1px solid var(--border); }
+  .status{ font-size:13px; color:var(--muted); margin-top:10px; min-height:18px; }
+  .invoice-head{ display:flex; flex-wrap:wrap; gap:16px 28px; justify-content:space-between; padding-bottom:14px; margin-bottom:14px; border-bottom:1px dashed var(--border); }
+  .field{ display:flex; flex-direction:column; gap:2px; }
+  .field .k{ font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+  .field .v{ font-family:"IBM Plex Mono",monospace; font-size:15px; font-weight:600; }
+  table.items{ width:100%; border-collapse:collapse; font-size:13px; }
+  table.items th{ text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); font-weight:600; padding:6px 8px; border-bottom:1px solid var(--border); }
+  table.items td{ padding:7px 8px; border-bottom:1px solid var(--border); font-family:"IBM Plex Mono",monospace; vertical-align:top; }
+  table.items td.desc{ font-family:"IBM Plex Sans",sans-serif; font-size:13px; }
+  table.items tr:last-child td{ border-bottom:none; }
+  .num-col{ text-align:right; white-space:nowrap; }
+  .tbl-wrap{ overflow-x:auto; border-radius:8px; }
+  .tag{ display:inline-flex; align-items:center; padding:2px 7px; border-radius:99px; font-size:10.5px; font-weight:700; }
+  .tag-exento{ background:var(--ok-soft); color:var(--ok); }
+  .tag-gravado{ background:var(--warn-soft); color:var(--warn); }
+  .totals{ margin-top:14px; padding-top:14px; border-top:1px dashed var(--border); display:grid; grid-template-columns:1fr auto; gap:6px 24px; max-width:360px; margin-left:auto; font-size:13.5px; }
+  .totals .lbl{ color:var(--muted); }
+  .totals .amt{ font-family:"IBM Plex Mono",monospace; text-align:right; font-variant-numeric:tabular-nums; }
+  .banner{ display:flex; gap:10px; align-items:flex-start; padding:12px 14px; border-radius:10px; font-size:13px; margin-top:14px; border:1px solid transparent; }
+  .banner.warn{ background:var(--warn-soft); border-color:var(--warn-border); color:var(--warn); }
+  .banner ul{ margin:6px 0 0; padding-left:18px; }
+  .banner .title{ font-weight:700; display:block; margin-bottom:2px; }
+  .actions{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:16px; }
+  footer.note{ font-size:12px; color:var(--muted); text-align:center; line-height:1.6; }
+  [hidden]{ display:none !important; }
+  @media (max-width:480px){ h1{ font-size:23px; } .invoice-head{ gap:12px 20px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="eyebrow">
+      <span class="barcode" aria-hidden="true">
+        <i style="height:12px"></i><i style="height:8px"></i><i style="height:12px"></i><i style="height:6px"></i><i style="height:12px"></i><i style="height:9px"></i><i style="height:12px"></i>
+      </span>
+      Droguería 20 de Junio
+    </div>
+    <h1>20 de Junio → Plex</h1>
+    <p class="lede">Subí el PDF de la factura y descargá el .CSV listo para importar en Plex. Todo corre en tu navegador — el PDF no se sube a ningún servidor.</p>
+  </header>
+
+  <section class="card" id="step-upload">
+    <p class="step-label"><span class="num">1</span> Subí la factura en PDF</p>
+    <label class="drop" id="dropzone" for="pdfInput">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 15V4M12 4L7.5 8.5M12 4l4.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <strong>Arrastrá el PDF acá o hacé clic para elegirlo</strong>
+      <span>Solo se procesa en este navegador</span>
+      <input id="pdfInput" type="file" accept="application/pdf">
+    </label>
+    <div class="filename" id="filenameRow" hidden></div>
+    <div class="status" id="status"></div>
+  </section>
+
+  <section class="card" id="resultCard" hidden>
+    <p class="step-label"><span class="num">2</span> Revisá y descargá</p>
+    <div class="invoice-head">
+      <div class="field"><span class="k">Comprobante</span><span class="v mono" id="outComprobante">—</span></div>
+      <div class="field"><span class="k">Fecha</span><span class="v mono" id="outFecha">—</span></div>
+      <div class="field"><span class="k">Ítems</span><span class="v mono" id="outItemCount">—</span></div>
+      <div class="field"><span class="k">Total</span><span class="v mono" id="outTotal">—</span></div>
+    </div>
+    <div class="tbl-wrap">
+      <table class="items">
+        <thead><tr><th>Código</th><th>Descripción</th><th>Cant.</th><th class="num-col">P. unitario</th><th class="num-col">Importe</th><th>IVA</th></tr></thead>
+        <tbody id="itemsBody"></tbody>
+      </table>
+    </div>
+    <div class="totals" id="totalsBox"></div>
+    <div id="warnBanner"></div>
+    <div class="actions">
+      <button class="btn btn-primary" id="downloadBtn" type="button">Descargar .CSV para Plex</button>
+      <button class="btn btn-ghost" id="resetBtn" type="button">Cargar otra factura</button>
+    </div>
+  </section>
+
+  <footer class="note">
+    La matemática de cada renglón (cantidad × precio unitario neto) está verificada contra un comprobante real.<br>
+    Algunos campos sin ejemplo de referencia quedan como mejor suposición — si Plex lo rechaza, avisá qué error da.
+  </footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+  // ---- datos fijos de la farmacia: ajustar si Plex espera otros valores ----
+  const CUIT_FARMACIA = "30718212606";
+  const NOMBRE_FARMACIA = "FCIA.BRACCO";
+
+  const state = { file: null, result: null };
+  const els = {
+    dropzone: document.getElementById("dropzone"),
+    input: document.getElementById("pdfInput"),
+    filenameRow: document.getElementById("filenameRow"),
+    status: document.getElementById("status"),
+    resultCard: document.getElementById("resultCard"),
+    outComprobante: document.getElementById("outComprobante"),
+    outFecha: document.getElementById("outFecha"),
+    outItemCount: document.getElementById("outItemCount"),
+    outTotal: document.getElementById("outTotal"),
+    itemsBody: document.getElementById("itemsBody"),
+    totalsBox: document.getElementById("totalsBox"),
+    warnBanner: document.getElementById("warnBanner"),
+    downloadBtn: document.getElementById("downloadBtn"),
+    resetBtn: document.getElementById("resetBtn"),
+  };
+
+  ["dragenter","dragover"].forEach(ev=>els.dropzone.addEventListener(ev, e=>{ e.preventDefault(); els.dropzone.classList.add("drag"); }));
+  ["dragleave","drop"].forEach(ev=>els.dropzone.addEventListener(ev, e=>{ e.preventDefault(); els.dropzone.classList.remove("drag"); }));
+  els.dropzone.addEventListener("drop", e=>{ const f = e.dataTransfer.files && e.dataTransfer.files[0]; if(f) handlePicked(f); });
+  els.input.addEventListener("change", e=>{ const f = e.target.files && e.target.files[0]; if(f) handlePicked(f); });
+  els.resetBtn.addEventListener("click", ()=>{
+    state.file = null; state.result = null; els.input.value = "";
+    els.filenameRow.hidden = true; els.resultCard.hidden = true; setStatus("");
+  });
+
+  function handlePicked(f){
+    state.file = f;
+    els.filenameRow.hidden = false;
+    els.filenameRow.textContent = "📄 " + f.name;
+    processFile(f);
+  }
+  function setStatus(msg, tone){
+    els.status.textContent = msg || "";
+    els.status.style.color = tone === "error" ? "var(--danger)" : "var(--muted)";
+  }
+
+  // ---------- utilidades numéricas (todo en centavos, sin floats) ----------
+  function moneyToCents(s){
+    if(!s) return 0;
+    s = String(s).trim().replace(/\./g, "");
+    const neg = s.startsWith("-"); if(neg) s = s.slice(1);
+    let [intPart, decPart] = s.split(",");
+    decPart = ((decPart || "0") + "00").slice(0,2);
+    const val = (parseInt(intPart||"0",10) * 100) + parseInt(decPart,10);
+    return neg ? -val : val;
+  }
+  function centsToStr(c){
+    const neg = c < 0; c = Math.abs(Math.round(c));
+    const intPart = Math.floor(c/100).toString();
+    const dec = (c%100).toString().padStart(2,"0");
+    return (neg?"-":"") + intPart + "," + dec;
+  }
+  function centsToDisplay(c){ return "$ " + centsToStr(c); }
+  function padStartStr(s, n, ch){ s = String(s); ch = ch || " "; while(s.length<n) s = ch+s; return s; }
+  function padEndStr(s, n, ch){ s = String(s); ch = ch || " "; while(s.length<n) s = s+ch; return s; }
+
+  // ---------- extracción de texto del PDF, agrupando por línea ----------
+  async function extractPdfText(file){
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({data: buf}).promise;
+    const page = await pdf.getPage(1);
+    const content = await page.getTextContent();
+    const rows = new Map();
+    content.items.forEach(it=>{
+      const y = Math.round(it.transform[5]);
+      const x = it.transform[4];
+      if(!rows.has(y)) rows.set(y, []);
+      rows.get(y).push({x, str: it.str});
+    });
+    const ys = Array.from(rows.keys()).sort((a,b)=>b-a);
+    const lines = ys.map(y=>{
+      const items = rows.get(y).sort((a,b)=>a.x-b.x);
+      let line = ""; let lastEnd = null;
+      items.forEach(it=>{
+        if(lastEnd !== null && it.x - lastEnd > 2 && line.length && !line.endsWith(" ")) line += " ";
+        line += it.str;
+        lastEnd = it.x + (it.str.length * 5);
+      });
+      return line;
+    });
+    return lines.join("\n");
+  }
+
+  async function processFile(file){
+    setStatus("Leyendo el PDF…");
+    els.resultCard.hidden = true;
+    try{
+      const text = await extractPdfText(file);
+      const data = parseVeinteDeJunio(text);
+      state.result = data;
+      renderResult(data);
+      setStatus("Listo.");
+    }catch(err){
+      console.error(err);
+      setStatus("No pude leer esta factura: " + err.message, "error");
+    }
+  }
+
+  // ============ 20 DE JUNIO — parseo del PDF ============
+  function parseVeinteDeJunio(rawText){
+    const text = rawText.replace(/(.)\1{3,}/g, "$1");
+
+    const mFac = text.match(/(\d{4})-(\d{8})\s*\/\s*\d+/);
+    if(!mFac) throw new Error("no encontré el número de factura (¿es una factura de 20 de Junio?)");
+    const ptoVta = mFac[1], nroComp = mFac[2];
+
+    const mFecha = text.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+    if(!mFecha) throw new Error("no encontré la fecha de la factura");
+    const fecha = mFecha[3]+mFecha[2]+mFecha[1]; // YYYYMMDD
+
+    const items = [];
+    text.split("\n").forEach(raw=>{
+      const line = raw.trim();
+      if(!line.includes("=")) return;
+      const m = line.match(/^(\d+)\s+(.*)$/);
+      if(!m) return;
+      const cantStr = m[1]; const resto = m[2];
+      const eqIdx = resto.indexOf("=");
+      if(eqIdx < 0) return;
+      const antes = resto.slice(0,eqIdx).trim().split(/\s+/);
+      const despues = resto.slice(eqIdx+1).trim().split(/\s+/);
+      if(antes.length < 2) return;
+      const labo = antes[antes.length-1];
+      const descripcion = antes.slice(0,-1).join(" ");
+      if(!despues.length || !/^\d{13}$/.test(despues[0])) return;
+      const codigo = despues[0];
+      let body = despues.slice(1);
+      if(!body.length) return;
+      body = body.slice(0,-1); // se descarta el importe impreso (no se usa en el CSV)
+
+      const isMoney = t => /^[\d.]+,\d{2}$/.test(t);
+      let gravado=false, sugPub=null, uniNeto=null;
+      if(body.length && isMoney(body[0])){ sugPub = body[0]; body = body.slice(1); }
+      if(body.length && body[0]==="(G)"){ gravado = true; body = body.slice(1); }
+      if(body.length && isMoney(body[0])){ uniNeto = body[0]; body = body.slice(1); }
+      else uniNeto = sugPub;
+
+      items.push({
+        codigo, cantidad: parseInt(cantStr,10), descripcion: descripcion.trim(), labo,
+        pubCents: sugPub ? moneyToCents(sugPub) : 0,
+        unitCents: uniNeto ? moneyToCents(uniNeto) : 0,
+        gravado,
+      });
+    });
+    if(!items.length) throw new Error("no encontré ítems reconocibles en el PDF");
+
+    function buscar(re){ const m = text.match(re); return m ? moneyToCents(m[1]) : 0; }
+    const exentoCents = buscar(/Base Exenta\.*\$\s*([\d.,]+)/);
+    const gravadoCents = buscar(/Base Gravada[\d, ]*%\.\$\s*([\d.,]+)/);
+    const ivaCents = buscar(/Iva\.\$\s*([\d.,]+)/);
+    const percepcionesCents = buscar(/Percepcion IIBB[^$]*\$\s*([\d.,]+)/);
+    const percepcionIvaCents = 0;
+    const totalPrinted = buscar(/TOTAL NETO\.*\$\s*([\d.,]+)/);
+    const calcTotal = exentoCents+gravadoCents+ivaCents+percepcionIvaCents+percepcionesCents;
+
+    const warnings = [];
+    if(totalPrinted && Math.abs(totalPrinted-calcTotal) > 1){
+      warnings.push("La suma de los componentes ("+centsToDisplay(calcTotal)+") no coincide exacto con el TOTAL NETO impreso ("+centsToDisplay(totalPrinted)+"). Se usó el total impreso.");
+    }
+    const totalCents = totalPrinted || calcTotal;
+
+    return { ptoVta, nroComp, fecha, items, exentoCents, gravadoCents, ivaCents, percepcionIvaCents, percepcionesCents, totalCents, warnings };
+  }
+
+  function fmtMonto(cents, width){ return padStartStr(centsToStr(cents), width||13, " "); }
+  function fmtPrecio(cents){
+    const intPart = Math.floor(cents/100);
+    const dec = Math.abs(cents%100);
+    return padStartStr(intPart,11,"0") + "," + padStartStr(dec,2,"0");
+  }
+  function fmtTasa(pct){
+    const intPart = Math.floor(pct).toString().padStart(2,"0");
+    const dec = Math.round((pct-Math.floor(pct))*100).toString().padStart(2,"0");
+    return intPart + "," + dec;
+  }
+
+  function buildCsv(d){
+    const nroComprobante = "FCA" + padStartStr(d.ptoVta,4,"0") + padStartStr(d.nroComp,8,"0");
+    const header = [
+      "C", CUIT_FARMACIA, padEndStr(NOMBRE_FARMACIA.slice(0,25),25), nroComprobante, d.fecha,
+      fmtMonto(d.exentoCents), fmtMonto(d.gravadoCents), fmtMonto(d.ivaCents),
+      fmtMonto(d.percepcionIvaCents), fmtMonto(d.percepcionesCents), fmtMonto(0),
+      fmtMonto(d.totalCents), padEndStr("",15), fmtMonto(0), fmtMonto(0), fmtMonto(0), fmtMonto(0),
+    ].join(";");
+
+    const lines = [header];
+    d.items.forEach((it, idx)=>{
+      const renglon = padStartStr(idx+1,4,"0");
+      const cant4 = padStartStr(it.cantidad,4,"0");
+      const desc50 = padEndStr(it.descripcion.slice(0,50),50);
+      const lab4 = padEndStr(it.labo.slice(0,4),4);
+      const tasa = it.gravado ? fmtTasa(21) : fmtTasa(0);
+      const det = [
+        "D", renglon, cant4, desc50, lab4, it.codigo,
+        fmtPrecio(it.pubCents), fmtPrecio(it.unitCents), tasa,
+        "00,00" + " ".repeat(111),
+      ].join(";");
+      lines.push(det);
+    });
+    return lines.join("\n") + "\n";
+  }
+
+  function renderResult(d){
+    els.outComprobante.textContent = "FCA" + d.ptoVta + d.nroComp;
+    els.outFecha.textContent = d.fecha.slice(6)+"/"+d.fecha.slice(4,6)+"/"+d.fecha.slice(0,4);
+    els.outItemCount.textContent = d.items.length;
+    els.outTotal.textContent = centsToDisplay(d.totalCents);
+
+    els.itemsBody.innerHTML = d.items.map(it=>{
+      const impCents = it.unitCents * it.cantidad;
+      return "<tr>"
+        + "<td>"+it.codigo+"</td>"
+        + "<td class='desc'>"+escapeHtml(it.descripcion)+"</td>"
+        + "<td class='num-col'>"+it.cantidad+"</td>"
+        + "<td class='num-col'>"+centsToStr(it.unitCents)+"</td>"
+        + "<td class='num-col'>"+centsToStr(impCents)+"</td>"
+        + "<td>"+(it.gravado ? "<span class='tag tag-gravado'>Gravado</span>" : "<span class='tag tag-exento'>Exento</span>")+"</td>"
+        + "</tr>";
+    }).join("");
+
+    els.totalsBox.innerHTML = [
+      ["Exento", d.exentoCents], ["Gravado", d.gravadoCents], ["IVA", d.ivaCents],
+      ["Percepción IVA", d.percepcionIvaCents], ["Percepciones IIBB", d.percepcionesCents],
+    ].map(([lbl,c])=>"<div class='lbl'>"+lbl+"</div><div class='amt'>"+centsToDisplay(c)+"</div>").join("")
+      + "<div class='lbl' style='font-weight:700;color:var(--ink)'>Total</div><div class='amt' style='font-weight:700;color:var(--ink)'>"+centsToDisplay(d.totalCents)+"</div>";
+
+    const notes = [
+      "El nombre de la farmacia (\""+NOMBRE_FARMACIA+"\") y el CUIT están fijos en el código (arriba del todo del archivo) — confirmá que son los que espera 20 de Junio.",
+      "Cómo se marca un ítem gravado en este CSV no se pudo confirmar con un ejemplo real: se usa 21,00% de IVA para los ítems marcados \"(G)\" en el PDF.",
+      "Hay un campo de 116 caracteres en cada renglón cuyo significado no se identificó; se reproduce igual que en el único ejemplo real disponible.",
+    ];
+    const allWarnings = d.warnings.concat(notes);
+    els.warnBanner.innerHTML = allWarnings.length
+      ? "<div class='banner warn'><div>⚠️</div><div><span class='title'>Revisar antes de confiar del todo</span><ul>"+allWarnings.map(w=>"<li>"+escapeHtml(w)+"</li>").join("")+"</ul></div></div>"
+      : "";
+
+    els.resultCard.hidden = false;
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
+
+  els.downloadBtn.addEventListener("click", ()=>{
+    const d = state.result;
+    if(!d) return;
+    const filename = "FCA" + d.ptoVta + d.nroComp + ".CSV";
+    const content = buildCsv(d);
+    const blob = new Blob([content], {type: "text/csv;charset=iso-8859-1"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 2000);
+    setStatus("Descargado: " + filename);
+  });
+})();
+</script>
+</body>
+</html>
