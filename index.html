@@ -254,7 +254,14 @@
 
   // ============ 20 DE JUNIO — parseo del PDF ============
   function parseVeinteDeJunio(rawText){
-    const text = rawText.replace(/(.)\1{3,}/g, "$1");
+    // OJO: acá hubo un bug serio: antes se "limpiaba" el texto colapsando
+    // cualquier racha de 4+ caracteres iguales seguidos (pensado para un
+    // artefacto de texto en negrita superpuesto). Pero eso también
+    // destruye importes reales que tienen 4+ dígitos iguales seguidos —
+    // por ejemplo "150000,00" quedaba "150,00" (se comía tres ceros).
+    // No hace falta: la extracción de pdf.js no duplica caracteres, así
+    // que se usa el texto tal cual viene.
+    const text = rawText;
 
     const mFac = text.match(/(\d{4})-(\d{8})\s*\/\s*\d+/);
     if(!mFac) throw new Error("no encontré el número de factura (¿es una factura de 20 de Junio?)");
@@ -264,31 +271,46 @@
     if(!mFecha) throw new Error("no encontré la fecha de la factura");
     const fecha = mFecha[3]+mFecha[2]+mFecha[1]; // YYYYMMDD
 
+    const isMoney = t => /^[\d.]+,\d{2}$/.test(t);
+
     const items = [];
     text.split("\n").forEach(raw=>{
       const line = raw.trim();
-      if(!line.includes("=")) return;
+      // El "=" que separa Labo del código de barras NO siempre aparece
+      // en el PDF (depende de cómo cae esa columna): no puede ser
+      // requisito para reconocer un renglón de ítem. En cambio, se busca
+      // directamente el código de barras (token de 13 dígitos) dentro
+      // de la línea, que sí es un identificador inequívoco.
       const m = line.match(/^(\d+)\s+(.*)$/);
       if(!m) return;
       const cantStr = m[1]; const resto = m[2];
-      const eqIdx = resto.indexOf("=");
-      if(eqIdx < 0) return;
-      const antes = resto.slice(0,eqIdx).trim().split(/\s+/);
-      const despues = resto.slice(eqIdx+1).trim().split(/\s+/);
-      if(antes.length < 2) return;
-      const labo = antes[antes.length-1];
-      const descripcion = antes.slice(0,-1).join(" ");
-      if(!despues.length || !/^\d{13}$/.test(despues[0])) return;
-      const codigo = despues[0];
-      let body = despues.slice(1);
-      if(!body.length) return;
-      body = body.slice(0,-1); // se descarta el importe impreso (no se usa en el CSV)
+      const tokens = resto.split(/\s+/);
 
-      const isMoney = t => /^[\d.]+,\d{2}$/.test(t);
+      let codigoIdx = -1;
+      for(let i=0;i<tokens.length;i++){ if(/^\d{13}$/.test(tokens[i])){ codigoIdx = i; break; } }
+      if(codigoIdx < 0) return; // sin código de barras real: no es un renglón de ítem
+
+      let preTokens = tokens.slice(0, codigoIdx);
+      if(preTokens.length && preTokens[preTokens.length-1] === "=") preTokens = preTokens.slice(0,-1);
+      if(preTokens.length < 2) return;
+      const labo = preTokens[preTokens.length-1];
+      const descripcion = preTokens.slice(0,-1).join(" ");
+
+      const codigo = tokens[codigoIdx];
+      const postTokens = tokens.slice(codigoIdx+1);
+      if(!postTokens.length || !isMoney(postTokens[postTokens.length-1])) return; // el importe siempre cierra un ítem real
+      let body = postTokens.slice(0,-1); // se descarta el importe impreso (no se usa en el CSV)
+
       let gravado=false, sugPub=null, uniNeto=null;
       if(body.length && isMoney(body[0])){ sugPub = body[0]; body = body.slice(1); }
       if(body.length && body[0]==="(G)"){ gravado = true; body = body.slice(1); }
-      if(body.length && isMoney(body[0])){ uniNeto = body[0]; body = body.slice(1); }
+      // A partir de acá "body" puede ser: [] | [marca no numérica] | [uniNeto]
+      // | [%dto, uniNeto]. El "%dto" de los renglones "TRANSFER" o de los
+      // ítems gravados "(G)" tiene el mismo formato "NN,NN" que un importe,
+      // así que si hay DOS valores con forma de dinero seguidos, el
+      // correcto es siempre el ÚLTIMO (no alcanza con "parece dinero").
+      if(body.length >= 2 && isMoney(body[0]) && isMoney(body[1])) uniNeto = body[1];
+      else if(body.length && isMoney(body[0])) uniNeto = body[0];
       else uniNeto = sugPub;
 
       items.push({
@@ -300,13 +322,20 @@
     });
     if(!items.length) throw new Error("no encontré ítems reconocibles en el PDF");
 
+    // Formato estricto de moneda argentina (dígitos/puntos + coma + 2
+    // decimales), no [\d.,]+ suelto: en algunas líneas en negrita (como
+    // "TOTAL NETO") el PDF dibuja el mismo texto dos veces superpuesto y
+    // un capturador suelto puede "comerse" ambas copias pegadas
+    // (p.ej. "402.135,53402.135,53"). Con el patrón estricto se toma
+    // solo el primer importe válido.
+    const MONEY_RE = "[\\d.]+,\\d{2}";
     function buscar(re){ const m = text.match(re); return m ? moneyToCents(m[1]) : 0; }
-    const exentoCents = buscar(/Base Exenta\.*\$\s*([\d.,]+)/);
-    const gravadoCents = buscar(/Base Gravada[\d, ]*%\.\$\s*([\d.,]+)/);
-    const ivaCents = buscar(/Iva\.\$\s*([\d.,]+)/);
-    const percepcionesCents = buscar(/Percepcion IIBB[^$]*\$\s*([\d.,]+)/);
+    const exentoCents = buscar(new RegExp("Base Exenta\\.*\\$\\s*(" + MONEY_RE + ")"));
+    const gravadoCents = buscar(new RegExp("Base Gravada[\\d, ]*%\\.\\$\\s*(" + MONEY_RE + ")"));
+    const ivaCents = buscar(new RegExp("Iva\\.\\$\\s*(" + MONEY_RE + ")"));
+    const percepcionesCents = buscar(new RegExp("Percepcion IIBB[^$]*\\$\\s*(" + MONEY_RE + ")"));
     const percepcionIvaCents = 0;
-    const totalPrinted = buscar(/TOTAL NETO\.*\$\s*([\d.,]+)/);
+    const totalPrinted = buscar(new RegExp("TOTAL NETO\\.*\\$\\s*(" + MONEY_RE + ")"));
     const calcTotal = exentoCents+gravadoCents+ivaCents+percepcionIvaCents+percepcionesCents;
 
     const warnings = [];
